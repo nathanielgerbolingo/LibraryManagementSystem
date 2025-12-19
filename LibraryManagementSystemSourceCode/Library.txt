@@ -1,0 +1,1047 @@
+package librarysystem;
+
+import java.sql.*;
+import java.util.ArrayList;
+import java.time.LocalDateTime;
+
+public class Library {
+    private Connection connection;
+
+    public Library() {
+        connection = DatabaseConnection.getConnection();
+        if (connection != null) {
+            initializeDatabase();
+            initializeSampleBooks();
+        } else {
+            throw new RuntimeException("Cannot initialize Library: Database connection failed");
+        }
+    }
+
+    public Connection getConnection() {
+        return this.connection;
+    }
+
+    public void refreshConnection() {
+        DatabaseConnection.refreshConnection();
+        connection = DatabaseConnection.getConnection();
+    }
+
+    private void initializeDatabase() {
+        createTablesIfNotExist();
+        checkAndAddMissingColumns();
+    }
+
+    private void createTablesIfNotExist() {
+        try {
+            Statement stmt = connection.createStatement();
+
+            stmt.execute("CREATE TABLE IF NOT EXISTS users (" +
+                    "id INT PRIMARY KEY AUTO_INCREMENT, " +
+                    "username VARCHAR(50) UNIQUE NOT NULL, " +
+                    "password VARCHAR(100) NOT NULL, " +
+                    "role VARCHAR(20) DEFAULT 'student', " +
+                    "is_locked BOOLEAN DEFAULT FALSE, " +
+                    "reputation INT DEFAULT 100, " +
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+
+            stmt.execute("CREATE TABLE IF NOT EXISTS books (" +
+                    "id INT PRIMARY KEY AUTO_INCREMENT, " +
+                    "title VARCHAR(200) NOT NULL, " +
+                    "author VARCHAR(100) NOT NULL, " +
+                    "quantity INT DEFAULT 1, " +
+                    "is_borrowed BOOLEAN DEFAULT FALSE, " +
+                    "borrowed_by VARCHAR(50), " +
+                    "UNIQUE KEY unique_book (title, author))");
+
+            stmt.execute("CREATE TABLE IF NOT EXISTS borrowed_books (" +
+                    "id INT PRIMARY KEY AUTO_INCREMENT, " +
+                    "user_id INT, " +
+                    "book_id INT, " +
+                    "borrow_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                    "return_date TIMESTAMP NULL)");
+
+            stmt.execute("CREATE TABLE IF NOT EXISTS transactions (" +
+                    "id INT PRIMARY KEY AUTO_INCREMENT, " +
+                    "username VARCHAR(50) NOT NULL, " +
+                    "book_title VARCHAR(200) NOT NULL, " +
+                    "action VARCHAR(20) NOT NULL, " +
+                    "transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+
+            stmt.execute("INSERT IGNORE INTO users (username, password, role, reputation) VALUES " +
+                    "('admin', 'admin123', 'admin', 100)");
+
+            stmt.close();
+
+        } catch (SQLException e) {
+            System.err.println("Error creating tables: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void checkAndAddMissingColumns() {
+        try {
+            Statement stmt = connection.createStatement();
+            DatabaseMetaData meta = connection.getMetaData();
+
+            String[] borrowedBooksColumns = {"duration_days", "due_date", "is_late"};
+
+            for (String columnName : borrowedBooksColumns) {
+                ResultSet columns = meta.getColumns(null, null, "borrowed_books", columnName);
+                if (!columns.next()) {
+                    switch (columnName) {
+                        case "duration_days":
+                            stmt.execute("ALTER TABLE borrowed_books ADD COLUMN duration_days INT DEFAULT 14");
+                            break;
+                        case "due_date":
+                            stmt.execute("ALTER TABLE borrowed_books ADD COLUMN due_date TIMESTAMP NULL");
+                            break;
+                        case "is_late":
+                            stmt.execute("ALTER TABLE borrowed_books ADD COLUMN is_late BOOLEAN DEFAULT FALSE");
+                            break;
+                    }
+                }
+                columns.close();
+            }
+
+            ResultSet columns = meta.getColumns(null, null, "users", "reputation");
+            if (!columns.next()) {
+                stmt.execute("ALTER TABLE users ADD COLUMN reputation INT DEFAULT 100");
+                stmt.execute("UPDATE users SET reputation = 100 WHERE reputation IS NULL");
+            }
+            columns.close();
+
+            stmt.close();
+
+        } catch (SQLException e) {
+            System.err.println("Error adding missing columns: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void initializeSampleBooks() {
+        String[] sampleBooks = {
+                "The Alchemist,Paulo Coelho",
+                "Harry Potter and the Sorcerer's Stone,J.K. Rowling",
+                "To Kill a Mockingbird,Harper Lee",
+                "1984,George Orwell",
+                "Pride and Prejudice,Jane Austen",
+                "The Great Gatsby,F. Scott Fitzgerald",
+                "Moby Dick,Herman Melville",
+                "War and Peace,Leo Tolstoy",
+                "The Catcher in the Rye,J.D. Salinger",
+                "The Lord of the Rings,J.R.R. Tolkien"
+        };
+
+        try {
+            for (String bookInfo : sampleBooks) {
+                String[] parts = bookInfo.split(",", 2);
+                if (parts.length == 2) {
+                    String title = parts[0];
+                    String author = parts[1];
+
+                    PreparedStatement checkStmt = connection.prepareStatement(
+                            "SELECT COUNT(*) FROM books WHERE title = ? AND author = ?");
+                    checkStmt.setString(1, title);
+                    checkStmt.setString(2, author);
+                    ResultSet rs = checkStmt.executeQuery();
+
+                    if (rs.next() && rs.getInt(1) == 0) {
+                        PreparedStatement insertStmt = connection.prepareStatement(
+                                "INSERT INTO books (title, author, quantity) VALUES (?, ?, ?)");
+                        insertStmt.setString(1, title);
+                        insertStmt.setString(2, author);
+                        insertStmt.setInt(3, 3);
+                        insertStmt.executeUpdate();
+                        insertStmt.close();
+                    }
+
+                    rs.close();
+                    checkStmt.close();
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // Refresh specific methods - each only refreshes its own data
+    public ArrayList<Book> refreshBooksData() {
+        return getAllBooks();
+    }
+
+    public ArrayList<User> refreshUsersData() {
+        return getAllUsers();
+    }
+
+    public ArrayList<Object[]> refreshReportsData() {
+        return getBorrowedBooksReport();
+    }
+
+    public ArrayList<Object[]> refreshTransactionsData() {
+        return getTransactionHistory();
+    }
+
+    public User refreshUserProfileData(int userId) {
+        return getUserProfile(userId);
+    }
+
+    // Original data methods
+    public ArrayList<Book> getAllBooks() {
+        ArrayList<Book> books = new ArrayList<>();
+        try {
+            Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery("SELECT * FROM books ORDER BY title");
+
+            while (rs.next()) {
+                Book book = new Book(
+                        rs.getInt("id"),
+                        rs.getString("title"),
+                        rs.getString("author"),
+                        rs.getInt("quantity"),
+                        rs.getBoolean("is_borrowed"),
+                        rs.getString("borrowed_by")
+                );
+                books.add(book);
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return books;
+    }
+
+    public boolean addBook(String title, String author, int quantity) {
+        try {
+            PreparedStatement checkStmt = connection.prepareStatement(
+                    "SELECT id, quantity FROM books WHERE title = ? AND author = ?");
+            checkStmt.setString(1, title);
+            checkStmt.setString(2, author);
+            ResultSet rs = checkStmt.executeQuery();
+
+            if (rs.next()) {
+                int bookId = rs.getInt("id");
+                int currentQty = rs.getInt("quantity");
+
+                PreparedStatement updateStmt = connection.prepareStatement(
+                        "UPDATE books SET quantity = ? WHERE id = ?");
+                updateStmt.setInt(1, currentQty + quantity);
+                updateStmt.setInt(2, bookId);
+                updateStmt.executeUpdate();
+                updateStmt.close();
+
+                rs.close();
+                checkStmt.close();
+                return true;
+            } else {
+                rs.close();
+                checkStmt.close();
+
+                PreparedStatement insertStmt = connection.prepareStatement(
+                        "INSERT INTO books (title, author, quantity) VALUES (?, ?, ?)");
+                insertStmt.setString(1, title);
+                insertStmt.setString(2, author);
+                insertStmt.setInt(3, quantity);
+                insertStmt.executeUpdate();
+                insertStmt.close();
+
+                return true;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean removeBook(int bookId) {
+        try {
+            PreparedStatement stmt = connection.prepareStatement(
+                    "DELETE FROM books WHERE id = ?");
+            stmt.setInt(1, bookId);
+            int rowsAffected = stmt.executeUpdate();
+            stmt.close();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public User login(String username, String password) {
+        try {
+            PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM users WHERE username = ? AND password = ?");
+            stmt.setString(1, username);
+            stmt.setString(2, password);
+            ResultSet rs = stmt.executeQuery();
+
+            if (rs.next()) {
+                if (rs.getBoolean("is_locked")) {
+                    rs.close();
+                    stmt.close();
+                    return null;
+                }
+
+                int reputation = 100;
+                try {
+                    reputation = rs.getInt("reputation");
+                    if (rs.wasNull()) {
+                        reputation = 100;
+                    }
+                } catch (SQLException e) {
+                    reputation = 100;
+                }
+
+                User user = new User(
+                        rs.getInt("id"),
+                        rs.getString("username"),
+                        rs.getString("password"),
+                        rs.getString("role"),
+                        rs.getBoolean("is_locked"),
+                        reputation
+                );
+
+                rs.close();
+                stmt.close();
+
+                loadUserBorrowedBooks(user);
+                return user;
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    private void loadUserBorrowedBooks(User user) {
+        try {
+            String sql = "SELECT b.* FROM books b " +
+                    "JOIN borrowed_books bb ON b.id = bb.book_id " +
+                    "WHERE bb.user_id = ? AND bb.return_date IS NULL";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setInt(1, user.getId());
+            ResultSet rs = stmt.executeQuery();
+
+            while (rs.next()) {
+                Book book = new Book(
+                        rs.getInt("id"),
+                        rs.getString("title"),
+                        rs.getString("author"),
+                        rs.getInt("quantity"),
+                        rs.getBoolean("is_borrowed"),
+                        rs.getString("borrowed_by")
+                );
+                user.getBorrowedBooks().add(book);
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public boolean registerUser(String username, String password) {
+        try {
+            String sql = "INSERT INTO users (username, password, role, is_locked, reputation) VALUES (?, ?, 'student', false, 100)";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, username);
+            stmt.setString(2, password);
+            stmt.executeUpdate();
+            stmt.close();
+            return true;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean borrowBook(User user, int bookId, int durationDays) {
+        try {
+            if (user.isLocked()) {
+                return false;
+            }
+
+            int maxLimit = user.getMaxBorrowLimit();
+            String countSql = "SELECT COUNT(*) FROM borrowed_books WHERE user_id = ? AND return_date IS NULL";
+            PreparedStatement countStmt = connection.prepareStatement(countSql);
+            countStmt.setInt(1, user.getId());
+            ResultSet rs = countStmt.executeQuery();
+            rs.next();
+            int borrowedCount = rs.getInt(1);
+            rs.close();
+            countStmt.close();
+
+            if (borrowedCount >= maxLimit) {
+                return false;
+            }
+
+            String checkBookSql = "SELECT quantity FROM books WHERE id = ?";
+            PreparedStatement checkBookStmt = connection.prepareStatement(checkBookSql);
+            checkBookStmt.setInt(1, bookId);
+            rs = checkBookStmt.executeQuery();
+            if (!rs.next() || rs.getInt("quantity") <= 0) {
+                rs.close();
+                checkBookStmt.close();
+                return false;
+            }
+            rs.close();
+            checkBookStmt.close();
+
+            connection.setAutoCommit(false);
+
+            String updateBookSql = "UPDATE books SET quantity = quantity - 1, is_borrowed = TRUE, borrowed_by = ? WHERE id = ?";
+            PreparedStatement updateBookStmt = connection.prepareStatement(updateBookSql);
+            updateBookStmt.setString(1, user.getUsername());
+            updateBookStmt.setInt(2, bookId);
+            updateBookStmt.executeUpdate();
+            updateBookStmt.close();
+
+            LocalDateTime dueDate = LocalDateTime.now().plusDays(durationDays);
+            Timestamp dueTimestamp = Timestamp.valueOf(dueDate);
+
+            boolean hasDueDateColumn = checkColumnExists("borrowed_books", "due_date");
+            boolean hasDurationDaysColumn = checkColumnExists("borrowed_books", "duration_days");
+
+            String borrowSql;
+            if (hasDueDateColumn && hasDurationDaysColumn) {
+                borrowSql = "INSERT INTO borrowed_books (user_id, book_id, duration_days, due_date) VALUES (?, ?, ?, ?)";
+            } else if (hasDueDateColumn) {
+                borrowSql = "INSERT INTO borrowed_books (user_id, book_id, due_date) VALUES (?, ?, ?)";
+            } else if (hasDurationDaysColumn) {
+                borrowSql = "INSERT INTO borrowed_books (user_id, book_id, duration_days) VALUES (?, ?, ?)";
+            } else {
+                borrowSql = "INSERT INTO borrowed_books (user_id, book_id) VALUES (?, ?)";
+            }
+
+            PreparedStatement borrowStmt = connection.prepareStatement(borrowSql);
+            borrowStmt.setInt(1, user.getId());
+            borrowStmt.setInt(2, bookId);
+            if (hasDueDateColumn && hasDurationDaysColumn) {
+                borrowStmt.setInt(3, durationDays);
+                borrowStmt.setTimestamp(4, dueTimestamp);
+            } else if (hasDueDateColumn) {
+                borrowStmt.setTimestamp(3, dueTimestamp);
+            } else if (hasDurationDaysColumn) {
+                borrowStmt.setInt(3, durationDays);
+            }
+            borrowStmt.executeUpdate();
+            borrowStmt.close();
+
+            String transSql = "INSERT INTO transactions (username, book_title, action) " +
+                    "SELECT ?, title, 'BORROWED' FROM books WHERE id = ?";
+            PreparedStatement transStmt = connection.prepareStatement(transSql);
+            transStmt.setString(1, user.getUsername());
+            transStmt.setInt(2, bookId);
+            transStmt.executeUpdate();
+            transStmt.close();
+
+            connection.commit();
+            connection.setAutoCommit(true);
+            return true;
+
+        } catch (SQLException e) {
+            try {
+                connection.rollback();
+                connection.setAutoCommit(true);
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private boolean checkColumnExists(String tableName, String columnName) {
+        try {
+            DatabaseMetaData meta = connection.getMetaData();
+            ResultSet columns = meta.getColumns(null, null, tableName, columnName);
+            boolean exists = columns.next();
+            columns.close();
+            return exists;
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
+    public boolean returnBook(User user, int bookId) {
+        try {
+            connection.setAutoCommit(false);
+
+            boolean isLate = false;
+
+            boolean hasDueDateColumn = checkColumnExists("borrowed_books", "due_date");
+            boolean hasIsLateColumn = checkColumnExists("borrowed_books", "is_late");
+
+            if (hasDueDateColumn) {
+                String checkLateSql = "SELECT due_date FROM borrowed_books WHERE user_id = ? AND book_id = ? AND return_date IS NULL";
+                PreparedStatement checkLateStmt = connection.prepareStatement(checkLateSql);
+                checkLateStmt.setInt(1, user.getId());
+                checkLateStmt.setInt(2, bookId);
+                ResultSet rs = checkLateStmt.executeQuery();
+                if (rs.next()) {
+                    Timestamp dueDate = rs.getTimestamp("due_date");
+                    if (dueDate != null) {
+                        LocalDateTime now = LocalDateTime.now();
+                        LocalDateTime due = dueDate.toLocalDateTime();
+                        if (now.isAfter(due)) {
+                            isLate = true;
+                        }
+                    }
+                }
+                rs.close();
+                checkLateStmt.close();
+            }
+
+            String updateBookSql = "UPDATE books SET quantity = quantity + 1, " +
+                    "is_borrowed = CASE WHEN quantity + 1 > 0 THEN FALSE ELSE TRUE END, " +
+                    "borrowed_by = CASE WHEN quantity + 1 > 0 THEN NULL ELSE borrowed_by END " +
+                    "WHERE id = ?";
+            PreparedStatement updateBookStmt = connection.prepareStatement(updateBookSql);
+            updateBookStmt.setInt(1, bookId);
+            updateBookStmt.executeUpdate();
+            updateBookStmt.close();
+
+            String returnSql;
+            if (hasIsLateColumn) {
+                returnSql = "UPDATE borrowed_books SET return_date = CURRENT_TIMESTAMP, is_late = ? " +
+                        "WHERE user_id = ? AND book_id = ? AND return_date IS NULL";
+            } else {
+                returnSql = "UPDATE borrowed_books SET return_date = CURRENT_TIMESTAMP " +
+                        "WHERE user_id = ? AND book_id = ? AND return_date IS NULL";
+            }
+
+            PreparedStatement returnStmt = connection.prepareStatement(returnSql);
+            if (hasIsLateColumn) {
+                returnStmt.setBoolean(1, isLate);
+                returnStmt.setInt(2, user.getId());
+                returnStmt.setInt(3, bookId);
+            } else {
+                returnStmt.setInt(1, user.getId());
+                returnStmt.setInt(2, bookId);
+            }
+            returnStmt.executeUpdate();
+            returnStmt.close();
+
+            if (isLate && "student".equals(user.getRole())) {
+                int penalty = 5;
+                int newReputation = Math.max(0, user.getReputation() - penalty);
+
+                String updateReputationSql = "UPDATE users SET reputation = ? WHERE id = ? AND role = 'student'";
+                PreparedStatement updateRepStmt = connection.prepareStatement(updateReputationSql);
+                updateRepStmt.setInt(1, newReputation);
+                updateRepStmt.setInt(2, user.getId());
+                updateRepStmt.executeUpdate();
+                updateRepStmt.close();
+
+                user.setReputation(newReputation);
+            }
+
+            String transSql = "INSERT INTO transactions (username, book_title, action) " +
+                    "SELECT ?, title, 'RETURNED' FROM books WHERE id = ?";
+            PreparedStatement transStmt = connection.prepareStatement(transSql);
+            transStmt.setString(1, user.getUsername());
+            transStmt.setInt(2, bookId);
+            transStmt.executeUpdate();
+            transStmt.close();
+
+            connection.commit();
+            connection.setAutoCommit(true);
+            return true;
+
+        } catch (SQLException e) {
+            try {
+                connection.rollback();
+                connection.setAutoCommit(true);
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public void updateAllReputations() {
+        try {
+            connection.setAutoCommit(false);
+
+            if (checkColumnExists("borrowed_books", "due_date")) {
+                String lateBooksSql = "SELECT user_id FROM borrowed_books bb " +
+                        "JOIN users u ON bb.user_id = u.id " +
+                        "WHERE bb.return_date IS NULL AND bb.due_date < NOW() " +
+                        "AND u.role = 'student'";
+
+                Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(lateBooksSql);
+
+                while (rs.next()) {
+                    int userId = rs.getInt("user_id");
+
+                    String penaltySql = "UPDATE users SET reputation = GREATEST(0, reputation - 5) WHERE id = ? AND role = 'student'";
+                    PreparedStatement penaltyStmt = connection.prepareStatement(penaltySql);
+                    penaltyStmt.setInt(1, userId);
+                    penaltyStmt.executeUpdate();
+                    penaltyStmt.close();
+
+                    if (checkColumnExists("borrowed_books", "is_late")) {
+                        String markLateSql = "UPDATE borrowed_books SET is_late = TRUE WHERE user_id = ? AND return_date IS NULL AND due_date < NOW()";
+                        PreparedStatement markLateStmt = connection.prepareStatement(markLateSql);
+                        markLateStmt.setInt(1, userId);
+                        markLateStmt.executeUpdate();
+                        markLateStmt.close();
+                    }
+                }
+
+                rs.close();
+                stmt.close();
+            }
+
+            connection.commit();
+        } catch (SQLException e) {
+            try {
+                connection.rollback();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+            e.printStackTrace();
+        }
+    }
+
+    public ArrayList<Object[]> getBorrowedBooksReport() {
+        ArrayList<Object[]> report = new ArrayList<>();
+        try {
+            boolean hasDueDate = checkColumnExists("borrowed_books", "due_date");
+
+            StringBuilder query = new StringBuilder();
+            query.append("SELECT b.title, b.author, u.username, bb.borrow_date, ");
+
+            if (hasDueDate) {
+                query.append("bb.due_date, ");
+            } else {
+                query.append("NULL as due_date, ");
+            }
+
+            query.append("CASE WHEN u.role = 'student' THEN u.reputation ELSE NULL END as reputation ");
+            query.append("FROM borrowed_books bb ");
+            query.append("JOIN books b ON bb.book_id = b.id ");
+            query.append("JOIN users u ON bb.user_id = u.id ");
+            query.append("WHERE bb.return_date IS NULL ");
+            query.append("ORDER BY bb.borrow_date DESC");
+
+            Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery(query.toString());
+
+            while (rs.next()) {
+                Object reputation = rs.getObject("reputation");
+                if (rs.wasNull()) {
+                    reputation = "N/A (Admin)";
+                }
+
+                Object[] row = {
+                        rs.getString("title"),
+                        rs.getString("author"),
+                        rs.getString("username"),
+                        rs.getTimestamp("borrow_date"),
+                        rs.getTimestamp("due_date"),
+                        reputation
+                };
+                report.add(row);
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return report;
+    }
+
+    public ArrayList<Object[]> getTransactionHistory() {
+        ArrayList<Object[]> history = new ArrayList<>();
+        try {
+            String sql = "SELECT username, book_title, action, transaction_date " +
+                    "FROM transactions " +
+                    "ORDER BY transaction_date DESC";
+            Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery(sql);
+
+            while (rs.next()) {
+                Object[] row = {
+                        rs.getString("username"),
+                        rs.getString("book_title"),
+                        rs.getString("action"),
+                        rs.getTimestamp("transaction_date")
+                };
+                history.add(row);
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return history;
+    }
+
+    public ArrayList<User> getAllUsers() {
+        ArrayList<User> users = new ArrayList<>();
+        try {
+            String sql = "SELECT * FROM users ORDER BY username";
+            Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery(sql);
+
+            while (rs.next()) {
+                int reputation = 100;
+                try {
+                    reputation = rs.getInt("reputation");
+                    if (rs.wasNull()) {
+                        reputation = 100;
+                    }
+                } catch (SQLException e) {
+                    reputation = 100;
+                }
+
+                User user = new User(
+                        rs.getInt("id"),
+                        rs.getString("username"),
+                        rs.getString("password"),
+                        rs.getString("role"),
+                        rs.getBoolean("is_locked"),
+                        reputation
+                );
+                users.add(user);
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return users;
+    }
+
+    public boolean toggleUserLock(int userId, boolean lock) {
+        try {
+            String sql = "UPDATE users SET is_locked = ? WHERE id = ? AND role != 'admin'";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setBoolean(1, lock);
+            stmt.setInt(2, userId);
+            int rowsAffected = stmt.executeUpdate();
+            stmt.close();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean adjustReputation(int userId, int adjustment) {
+        if (!checkColumnExists("users", "reputation")) {
+            return false;
+        }
+
+        try {
+            String sql = "UPDATE users SET reputation = GREATEST(0, LEAST(100, reputation + ?)) WHERE id = ? AND role = 'student'";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setInt(1, adjustment);
+            stmt.setInt(2, userId);
+            int rowsAffected = stmt.executeUpdate();
+            stmt.close();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean changePassword(int userId, String newPassword) {
+        try {
+            String sql = "UPDATE users SET password = ? WHERE id = ?";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, newPassword);
+            stmt.setInt(2, userId);
+            int rowsAffected = stmt.executeUpdate();
+            stmt.close();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean deleteUser(int userId) {
+        try {
+            String sql = "DELETE FROM users WHERE id = ? AND role != 'admin'";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setInt(1, userId);
+            int rowsAffected = stmt.executeUpdate();
+            stmt.close();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public User getUserProfile(int userId) {
+        try {
+            String sql = "SELECT * FROM users WHERE id = ?";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setInt(1, userId);
+            ResultSet rs = stmt.executeQuery();
+
+            if (rs.next()) {
+                int reputation = 100;
+                try {
+                    reputation = rs.getInt("reputation");
+                    if (rs.wasNull()) {
+                        reputation = 100;
+                    }
+                } catch (SQLException e) {
+                    reputation = 100;
+                }
+
+                User user = new User(
+                        rs.getInt("id"),
+                        rs.getString("username"),
+                        rs.getString("password"),
+                        rs.getString("role"),
+                        rs.getBoolean("is_locked"),
+                        reputation
+                );
+
+                rs.close();
+                stmt.close();
+
+                loadUserBorrowedBooks(user);
+                return user;
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public StudentStatistics getStudentStatistics(int userId) {
+        StudentStatistics stats = new StudentStatistics();
+        try {
+            String currentSql = "SELECT COUNT(*) as current_count FROM borrowed_books " +
+                    "WHERE user_id = ? AND return_date IS NULL";
+            PreparedStatement currentStmt = connection.prepareStatement(currentSql);
+            currentStmt.setInt(1, userId);
+            ResultSet rs = currentStmt.executeQuery();
+            if (rs.next()) {
+                stats.setCurrentlyBorrowed(rs.getInt("current_count"));
+            }
+            rs.close();
+            currentStmt.close();
+
+            String totalSql = "SELECT COUNT(*) as total_count FROM borrowed_books WHERE user_id = ?";
+            PreparedStatement totalStmt = connection.prepareStatement(totalSql);
+            totalStmt.setInt(1, userId);
+            rs = totalStmt.executeQuery();
+            if (rs.next()) {
+                stats.setTotalBorrowed(rs.getInt("total_count"));
+            }
+            rs.close();
+            totalStmt.close();
+
+            String onTimeSql = "SELECT COUNT(*) as return_count FROM borrowed_books " +
+                    "WHERE user_id = ? AND return_date IS NOT NULL";
+            PreparedStatement onTimeStmt = connection.prepareStatement(onTimeSql);
+            onTimeStmt.setInt(1, userId);
+            rs = onTimeStmt.executeQuery();
+            int totalReturns = 0;
+            if (rs.next()) {
+                totalReturns = rs.getInt("return_count");
+            }
+            rs.close();
+            onTimeStmt.close();
+
+            int lateReturns = 0;
+            if (checkColumnExists("borrowed_books", "is_late")) {
+                String lateSql = "SELECT COUNT(*) as late_count FROM borrowed_books " +
+                        "WHERE user_id = ? AND is_late = TRUE";
+                PreparedStatement lateStmt = connection.prepareStatement(lateSql);
+                lateStmt.setInt(1, userId);
+                rs = lateStmt.executeQuery();
+                if (rs.next()) {
+                    lateReturns = rs.getInt("late_count");
+                }
+                rs.close();
+                lateStmt.close();
+            }
+
+            stats.setLateReturns(lateReturns);
+            stats.setOnTimeReturns(Math.max(0, totalReturns - lateReturns));
+
+            String favoriteAuthorSql = "SELECT b.author, COUNT(*) as count " +
+                    "FROM borrowed_books bb " +
+                    "JOIN books b ON bb.book_id = b.id " +
+                    "WHERE bb.user_id = ? " +
+                    "GROUP BY b.author " +
+                    "ORDER BY count DESC " +
+                    "LIMIT 1";
+            PreparedStatement favStmt = connection.prepareStatement(favoriteAuthorSql);
+            favStmt.setInt(1, userId);
+            rs = favStmt.executeQuery();
+            if (rs.next()) {
+                stats.setFavoriteAuthor(rs.getString("author"));
+            } else {
+                stats.setFavoriteAuthor("None");
+            }
+            rs.close();
+            favStmt.close();
+
+            String repSql = "SELECT reputation FROM users WHERE id = ?";
+            PreparedStatement repStmt = connection.prepareStatement(repSql);
+            repStmt.setInt(1, userId);
+            rs = repStmt.executeQuery();
+            if (rs.next()) {
+                stats.setReputation(rs.getInt("reputation"));
+            }
+            rs.close();
+            repStmt.close();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return stats;
+    }
+
+    public ArrayList<Object[]> getStudentBorrowingHistory(int userId) {
+        ArrayList<Object[]> history = new ArrayList<>();
+        try {
+            StringBuilder query = new StringBuilder();
+            query.append("SELECT b.title, b.author, bb.borrow_date, bb.return_date, ");
+
+            if (checkColumnExists("borrowed_books", "due_date")) {
+                query.append("bb.due_date, ");
+            } else {
+                query.append("NULL as due_date, ");
+            }
+
+            if (checkColumnExists("borrowed_books", "duration_days")) {
+                query.append("bb.duration_days, ");
+            } else {
+                query.append("14 as duration_days, ");
+            }
+
+            if (checkColumnExists("borrowed_books", "is_late")) {
+                query.append("bb.is_late, ");
+            } else {
+                query.append("FALSE as is_late, ");
+            }
+
+            query.append("CASE WHEN bb.return_date IS NULL THEN 'Currently Borrowed' ");
+            query.append("WHEN bb.return_date IS NOT NULL THEN 'Returned' ");
+            query.append("ELSE 'Unknown' END as status, ");
+            query.append("DATEDIFF(COALESCE(bb.return_date, NOW()), bb.borrow_date) as days_borrowed ");
+            query.append("FROM borrowed_books bb ");
+            query.append("JOIN books b ON bb.book_id = b.id ");
+            query.append("WHERE bb.user_id = ? ");
+            query.append("ORDER BY bb.borrow_date DESC");
+
+            PreparedStatement stmt = connection.prepareStatement(query.toString());
+            stmt.setInt(1, userId);
+            ResultSet rs = stmt.executeQuery();
+
+            while (rs.next()) {
+                Object[] row = {
+                        rs.getString("title"),
+                        rs.getString("author"),
+                        rs.getTimestamp("borrow_date"),
+                        rs.getTimestamp("return_date"),
+                        rs.getTimestamp("due_date"),
+                        rs.getInt("duration_days"),
+                        rs.getBoolean("is_late"),
+                        rs.getString("status"),
+                        rs.getInt("days_borrowed")
+                };
+                history.add(row);
+            }
+
+            rs.close();
+            stmt.close();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return history;
+    }
+
+    public int getStudentBorrowingLimit(int userId) {
+        try {
+            String sql = "SELECT role, reputation FROM users WHERE id = ?";
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setInt(1, userId);
+            ResultSet rs = stmt.executeQuery();
+
+            if (rs.next()) {
+                String role = rs.getString("role");
+                if ("admin".equals(role)) {
+                    rs.close();
+                    stmt.close();
+                    return 999;
+                }
+
+                int reputation = 100;
+                try {
+                    reputation = rs.getInt("reputation");
+                    if (rs.wasNull()) {
+                        reputation = 100;
+                    }
+                } catch (SQLException e) {
+                    reputation = 100;
+                }
+
+                rs.close();
+                stmt.close();
+
+                if (reputation >= 80) return 3;
+                else if (reputation >= 50) return 2;
+                else return 1;
+            }
+
+            rs.close();
+            stmt.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return 1;
+    }
+
+    public static class StudentStatistics {
+        private int totalBorrowed;
+        private int currentlyBorrowed;
+        private int onTimeReturns;
+        private int lateReturns;
+        private String favoriteAuthor;
+        private int reputation;
+
+        public int getTotalBorrowed() { return totalBorrowed; }
+        public void setTotalBorrowed(int totalBorrowed) { this.totalBorrowed = totalBorrowed; }
+
+        public int getCurrentlyBorrowed() { return currentlyBorrowed; }
+        public void setCurrentlyBorrowed(int currentlyBorrowed) { this.currentlyBorrowed = currentlyBorrowed; }
+
+        public int getOnTimeReturns() { return onTimeReturns; }
+        public void setOnTimeReturns(int onTimeReturns) { this.onTimeReturns = onTimeReturns; }
+
+        public int getLateReturns() { return lateReturns; }
+        public void setLateReturns(int lateReturns) { this.lateReturns = lateReturns; }
+
+        public String getFavoriteAuthor() { return favoriteAuthor; }
+        public void setFavoriteAuthor(String favoriteAuthor) { this.favoriteAuthor = favoriteAuthor; }
+
+        public int getReputation() { return reputation; }
+        public void setReputation(int reputation) { this.reputation = reputation; }
+    }
+}

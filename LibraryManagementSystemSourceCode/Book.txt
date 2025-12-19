@@ -1,0 +1,37 @@
+package librarysystem;
+
+public class Book {
+    private int id;
+    private String title;
+    private String author;
+    private boolean isBorrowed;
+    private String borrowedBy;
+    private int quantity;
+
+    public Book(String title, String author) {
+        this.title = title;
+        this.author = author;
+        this.quantity = 1;
+        this.isBorrowed = false;
+    }
+
+    public Book(int id, String title, String author, int quantity, boolean isBorrowed, String borrowedBy) {
+        this.id = id;
+        this.title = title;
+        this.author = author;
+        this.quantity = quantity;
+        this.isBorrowed = isBorrowed;
+        this.borrowedBy = borrowedBy;
+    }
+
+    // Getters and Setters
+    public int getId() { return id; }
+    public String getTitle() { return title; }
+    public String getAuthor() { return author; }
+    public boolean isBorrowed() { return isBorrowed; }
+    public String getBorrowedBy() { return borrowedBy; }
+    public int getQuantity() { return quantity; }
+    public void setBorrowed(boolean borrowed) { isBorrowed = borrowed; }
+    public void setBorrowedBy(String borrowedBy) { this.borrowedBy = borrowedBy; }
+    public void setQuantity(int quantity) { this.quantity = quantity; }
+}

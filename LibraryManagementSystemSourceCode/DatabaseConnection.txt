@@ -1,0 +1,162 @@
+package librarysystem;
+
+import javax.swing.*;
+import java.sql.*;
+
+public class DatabaseConnection {
+    private static final String URL = "jdbc:mysql://localhost:3306/";
+    private static final String DB_NAME = "library_db";
+    private static final String USER = "root";
+    private static final String PASSWORD = "";
+    private static Connection connection = null;
+
+    public static Connection getConnection() {
+        if (connection == null || isConnectionClosed()) {
+            reconnect();
+        }
+        return connection;
+    }
+
+    private static boolean isConnectionClosed() {
+        try {
+            return connection == null || connection.isClosed();
+        } catch (SQLException e) {
+            return true;
+        }
+    }
+
+    private static void reconnect() {
+        try {
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+            }
+
+            Class.forName("com.mysql.cj.jdbc.Driver");
+            createDatabaseIfNotExists();
+            connection = DriverManager.getConnection(URL + DB_NAME, USER, PASSWORD);
+            createTables();
+            System.out.println("Database connected successfully!");
+        } catch (Exception e) {
+            System.err.println("Failed to connect to database: " + e.getMessage());
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(null,
+                    "Cannot connect to database. Please ensure:\n" +
+                            "1. MySQL Server is running\n" +
+                            "2. Username and password are correct\n" +
+                            "3. MySQL Connector JAR is in classpath\n\n" +
+                            "Error: " + e.getMessage(),
+                    "Database Connection Error",
+                    JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
+        }
+    }
+
+    private static void createDatabaseIfNotExists() {
+        Connection tempConn = null;
+        try {
+            tempConn = DriverManager.getConnection(URL, USER, PASSWORD);
+            Statement stmt = tempConn.createStatement();
+            String createDBSQL = "CREATE DATABASE IF NOT EXISTS " + DB_NAME +
+                    " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+            stmt.executeUpdate(createDBSQL);
+            System.out.println("Database checked/created: " + DB_NAME);
+            stmt.close();
+        } catch (SQLException e) {
+            System.err.println("Error creating database: " + e.getMessage());
+            throw new RuntimeException("Cannot create database", e);
+        } finally {
+            try {
+                if (tempConn != null) tempConn.close();
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static void createTables() {
+        try {
+            Statement stmt = connection.createStatement();
+
+            // Create books table
+            String createBooksTable = "CREATE TABLE IF NOT EXISTS books (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY," +
+                    "title VARCHAR(255) NOT NULL," +
+                    "author VARCHAR(255) NOT NULL," +
+                    "quantity INT DEFAULT 1," +
+                    "is_borrowed BOOLEAN DEFAULT FALSE," +
+                    "borrowed_by VARCHAR(255)," +
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    ")";
+            stmt.execute(createBooksTable);
+
+            // Create users table with is_locked AND reputation
+            String createUsersTable = "CREATE TABLE IF NOT EXISTS users (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY," +
+                    "username VARCHAR(255) UNIQUE NOT NULL," +
+                    "password VARCHAR(255) NOT NULL," +
+                    "role VARCHAR(50) DEFAULT 'student'," +
+                    "is_locked BOOLEAN DEFAULT FALSE," +
+                    "reputation INT DEFAULT 100," + // NEW: Reputation column
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    ")";
+            stmt.execute(createUsersTable);
+
+            // Create transactions table
+            String createTransactionsTable = "CREATE TABLE IF NOT EXISTS transactions (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY," +
+                    "username VARCHAR(255) NOT NULL," +
+                    "book_title VARCHAR(255) NOT NULL," +
+                    "action VARCHAR(50) NOT NULL," +
+                    "transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    ")";
+            stmt.execute(createTransactionsTable);
+
+            // Create borrowed_books table WITH DURATION
+            String createBorrowedBooksTable = "CREATE TABLE IF NOT EXISTS borrowed_books (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY," +
+                    "user_id INT," +
+                    "book_id INT," +
+                    "borrow_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                    "due_date TIMESTAMP NULL," + // NEW: Due date field
+                    "return_date TIMESTAMP NULL," +
+                    "duration_days INT DEFAULT 14," + // NEW: Duration in days
+                    "is_late BOOLEAN DEFAULT FALSE," + // NEW: Track if late
+                    "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE," +
+                    "FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE" +
+                    ")";
+            stmt.execute(createBorrowedBooksTable);
+
+            // Insert default admin user if not exists
+            String checkAdmin = "SELECT COUNT(*) FROM users WHERE username = 'admin'";
+            ResultSet rs = stmt.executeQuery(checkAdmin);
+            rs.next();
+            if (rs.getInt(1) == 0) {
+                String insertAdmin = "INSERT INTO users (username, password, role, is_locked, reputation) VALUES ('admin', '1234', 'admin', false, 100)";
+                stmt.executeUpdate(insertAdmin);
+                System.out.println("Default admin user created: admin/1234");
+            }
+
+            stmt.close();
+        } catch (SQLException e) {
+            System.err.println("Error creating tables: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public static void closeConnection() {
+        try {
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+                System.out.println("Database connection closed.");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void refreshConnection() {
+        closeConnection();
+        connection = null;
+        getConnection();
+    }
+}

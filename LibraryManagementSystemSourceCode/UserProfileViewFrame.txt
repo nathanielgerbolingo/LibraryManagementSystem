@@ -1,0 +1,434 @@
+package librarysystem;
+
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.util.ArrayList;
+import java.io.File;
+import java.io.PrintWriter;
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Timestamp;
+import java.sql.SQLException;
+
+public class UserProfileViewFrame extends JFrame {
+    private Library library;
+    private User viewedUser;
+    private JLabel totalBorrowedLabel;
+    private JLabel currentlyBorrowedLabel;
+    private JLabel onTimeReturnsLabel;
+    private JLabel lateReturnsLabel;
+    private JLabel favoriteAuthorLabel;
+    private JLabel reputationLabel;
+    private DefaultTableModel historyTableModel;
+    private JTable historyTable;
+
+    public UserProfileViewFrame(Library library, User viewedUser) {
+        this.library = library;
+        this.viewedUser = viewedUser;
+        initComponents();
+        loadStatistics();
+        loadBorrowingHistory();
+    }
+
+    private void initComponents() {
+        setTitle("Student Profile - " + viewedUser.getUsername());
+        setSize(1100, 750);
+        setLocationRelativeTo(null);
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+
+        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        JLabel titleLabel = new JLabel("📚 STUDENT PROFILE", SwingConstants.CENTER);
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 20));
+        titleLabel.setForeground(new Color(0, 100, 0));
+        headerPanel.add(titleLabel, BorderLayout.CENTER);
+
+        JButton refreshButton = new JButton("⟳ Refresh All");
+        refreshButton.setFont(new Font("Arial", Font.BOLD, 12));
+        refreshButton.addActionListener(e -> refreshAllData());
+        headerPanel.add(refreshButton, BorderLayout.EAST);
+
+        mainPanel.add(headerPanel, BorderLayout.NORTH);
+
+        JTabbedPane tabbedPane = new JTabbedPane();
+        tabbedPane.addTab("📊 Statistics", createStatisticsTab());
+        tabbedPane.addTab("📚 Borrowing History", createHistoryTab());
+        tabbedPane.addTab("👤 Basic Info", createBasicInfoTab());
+
+        mainPanel.add(tabbedPane, BorderLayout.CENTER);
+
+        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 10));
+
+        if (!"admin".equals(viewedUser.getRole())) {
+            JButton toggleLockButton = new JButton(
+                    viewedUser.isLocked() ? "🔓 Unlock Account" : "🔒 Lock Account"
+            );
+            toggleLockButton.addActionListener(e -> toggleUserLock());
+            bottomPanel.add(toggleLockButton);
+        }
+
+        JButton closeButton = new JButton("✖ Close");
+        closeButton.addActionListener(e -> dispose());
+        bottomPanel.add(closeButton);
+
+        mainPanel.add(bottomPanel, BorderLayout.SOUTH);
+
+        add(mainPanel);
+    }
+
+    private JPanel createStatisticsTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+
+        JPanel statsGrid = new JPanel(new GridLayout(6, 2, 15, 15));
+        statsGrid.setBorder(BorderFactory.createTitledBorder("Student Statistics"));
+
+        JPanel totalPanel = createStatPanel("📚 Total Books Borrowed", "0");
+        totalBorrowedLabel = (JLabel) ((JPanel) totalPanel.getComponent(1)).getComponent(0);
+        statsGrid.add(totalPanel);
+
+        JPanel currentPanel = createStatPanel("⏳ Currently Borrowed", "0");
+        currentlyBorrowedLabel = (JLabel) ((JPanel) currentPanel.getComponent(1)).getComponent(0);
+        statsGrid.add(currentPanel);
+
+        JPanel onTimePanel = createStatPanel("✅ On-Time Returns", "0");
+        onTimeReturnsLabel = (JLabel) ((JPanel) onTimePanel.getComponent(1)).getComponent(0);
+        statsGrid.add(onTimePanel);
+
+        JPanel latePanel = createStatPanel("⚠️ Late Returns", "0");
+        lateReturnsLabel = (JLabel) ((JPanel) latePanel.getComponent(1)).getComponent(0);
+        statsGrid.add(latePanel);
+
+        JPanel favAuthorPanel = createStatPanel("⭐ Favorite Author", "None");
+        favoriteAuthorLabel = (JLabel) ((JPanel) favAuthorPanel.getComponent(1)).getComponent(0);
+        statsGrid.add(favAuthorPanel);
+
+        JPanel reputationPanel = createStatPanel("🏆 Reputation Score", "100/100");
+        reputationLabel = (JLabel) ((JPanel) reputationPanel.getComponent(1)).getComponent(0);
+        statsGrid.add(reputationPanel);
+
+        for (int i = 0; i < 6; i++) {
+            statsGrid.add(new JPanel());
+        }
+
+        panel.add(statsGrid, BorderLayout.CENTER);
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton refreshStatsButton = new JButton("⟳ Refresh Statistics");
+        refreshStatsButton.addActionListener(e -> loadStatistics());
+        buttonPanel.add(refreshStatsButton);
+        panel.add(buttonPanel, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private JPanel createStatPanel(String title, String value) {
+        JPanel panel = new JPanel(new BorderLayout(5, 5));
+
+        JLabel titleLabel = new JLabel(title);
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 14));
+
+        JPanel valuePanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        JLabel valueLabel = new JLabel(value);
+        valueLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        valueLabel.setForeground(new Color(0, 100, 200));
+        valuePanel.add(valueLabel);
+
+        panel.add(titleLabel, BorderLayout.NORTH);
+        panel.add(valuePanel, BorderLayout.CENTER);
+
+        return panel;
+    }
+
+    private JPanel createHistoryTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        // UPDATED: Added due date and late status columns
+        String[] columns = {"Book Title", "Author", "Borrow Date", "Due Date", "Return Date", "Status", "Days", "Late"};
+        historyTableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        historyTable = new JTable(historyTableModel);
+        historyTable.setRowHeight(25);
+        historyTable.getColumnModel().getColumn(0).setPreferredWidth(180);
+        historyTable.getColumnModel().getColumn(1).setPreferredWidth(140);
+        historyTable.getColumnModel().getColumn(2).setPreferredWidth(140);
+        historyTable.getColumnModel().getColumn(3).setPreferredWidth(140);
+        historyTable.getColumnModel().getColumn(4).setPreferredWidth(140);
+        historyTable.getColumnModel().getColumn(5).setPreferredWidth(100);
+        historyTable.getColumnModel().getColumn(6).setPreferredWidth(60);
+        historyTable.getColumnModel().getColumn(7).setPreferredWidth(50);
+
+        JScrollPane scrollPane = new JScrollPane(historyTable);
+        scrollPane.setBorder(BorderFactory.createTitledBorder("Borrowing History"));
+
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
+        JButton refreshHistoryButton = new JButton("⟳ Refresh History");
+        refreshHistoryButton.addActionListener(e -> loadBorrowingHistory());
+
+        JButton exportButton = new JButton("📥 Export to CSV");
+        exportButton.addActionListener(e -> exportToCSV());
+
+        buttonPanel.add(refreshHistoryButton);
+        buttonPanel.add(exportButton);
+        panel.add(buttonPanel, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private JPanel createBasicInfoTab() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(10, 10, 10, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        panel.add(new JLabel("Student ID:"), gbc);
+
+        gbc.gridx = 1;
+        JTextField idField = new JTextField(String.valueOf(viewedUser.getId()), 25);
+        idField.setEditable(false);
+        panel.add(idField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        panel.add(new JLabel("Username:"), gbc);
+
+        gbc.gridx = 1;
+        JTextField usernameField = new JTextField(viewedUser.getUsername(), 25);
+        usernameField.setEditable(false);
+        panel.add(usernameField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        panel.add(new JLabel("Role:"), gbc);
+
+        gbc.gridx = 1;
+        JTextField roleField = new JTextField(viewedUser.getRole(), 25);
+        roleField.setEditable(false);
+        panel.add(roleField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        panel.add(new JLabel("Account Status:"), gbc);
+
+        gbc.gridx = 1;
+        String status = viewedUser.isLocked() ? "🔒 LOCKED" : "✅ ACTIVE";
+        Color statusColor = viewedUser.isLocked() ? Color.RED : new Color(0, 128, 0);
+        JLabel statusLabel = new JLabel(status);
+        statusLabel.setForeground(statusColor);
+        statusLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        panel.add(statusLabel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 4;
+        panel.add(new JLabel("Reputation:"), gbc);
+
+        gbc.gridx = 1;
+        String repText = viewedUser.getReputation() + "/100 (" + viewedUser.getReputationStatus() + ")";
+        JLabel repLabel = new JLabel(repText);
+        repLabel.setForeground(viewedUser.getReputationColor());
+        repLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        panel.add(repLabel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 5;
+        panel.add(new JLabel("Borrowing Limit:"), gbc);
+
+        gbc.gridx = 1;
+        String limitText = viewedUser.getMaxBorrowLimit() + " books maximum";
+        if (viewedUser.getMaxBorrowLimit() == 1) limitText += " (Low Reputation)";
+        JLabel limitLabel = new JLabel(limitText);
+        limitLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        panel.add(limitLabel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 6;
+        gbc.gridwidth = 2;
+        panel.add(new JSeparator(), gbc);
+
+        gbc.gridy = 7;
+        panel.add(new JLabel("Account Created:"), gbc);
+
+        gbc.gridy = 8;
+        JLabel createdLabel = new JLabel(getAccountCreationDate());
+        createdLabel.setFont(new Font("Arial", Font.ITALIC, 12));
+        panel.add(createdLabel, gbc);
+
+        gbc.gridy = 9;
+        gbc.weighty = 1.0;
+        gbc.fill = GridBagConstraints.BOTH;
+        panel.add(new JPanel(), gbc);
+
+        return panel;
+    }
+
+    private String getAccountCreationDate() {
+        return "Date not available";
+    }
+
+    private void loadStatistics() {
+        try {
+            library.refreshConnection();
+            Library.StudentStatistics stats = library.getStudentStatistics(viewedUser.getId());
+
+            SwingUtilities.invokeLater(() -> {
+                totalBorrowedLabel.setText(String.valueOf(stats.getTotalBorrowed()));
+                currentlyBorrowedLabel.setText(String.valueOf(stats.getCurrentlyBorrowed()));
+                onTimeReturnsLabel.setText(String.valueOf(stats.getOnTimeReturns()));
+                lateReturnsLabel.setText(String.valueOf(stats.getLateReturns()));
+                favoriteAuthorLabel.setText(stats.getFavoriteAuthor());
+                reputationLabel.setText(stats.getReputation() + "/100");
+
+                viewedUser = library.getUserProfile(viewedUser.getId());
+            });
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error loading statistics: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void loadBorrowingHistory() {
+        try {
+            library.refreshConnection();
+            ArrayList<Object[]> history = library.getStudentBorrowingHistory(viewedUser.getId());
+
+            SwingUtilities.invokeLater(() -> {
+                historyTableModel.setRowCount(0);
+                for (Object[] row : history) {
+                    // Format the row for display
+                    Object[] displayRow = {
+                            row[0], // title
+                            row[1], // author
+                            formatTimestamp((java.sql.Timestamp) row[2]), // borrow date
+                            formatTimestamp((java.sql.Timestamp) row[4]), // due date
+                            formatTimestamp((java.sql.Timestamp) row[3]), // return date
+                            row[7], // status
+                            row[8], // days borrowed
+                            ((Boolean) row[6]) ? "Yes" : "No" // late status
+                    };
+                    historyTableModel.addRow(displayRow);
+                }
+
+                if (historyTableModel.getRowCount() == 0) {
+                    historyTableModel.addRow(new Object[]{
+                            "No borrowing history found", "", "", "", "", "", "", ""
+                    });
+                }
+            });
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error loading history: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private String formatTimestamp(java.sql.Timestamp timestamp) {
+        if (timestamp == null) return "N/A";
+        return timestamp.toString().substring(0, 16); // YYYY-MM-DD HH:MM
+    }
+
+    private void refreshAllData() {
+        library.updateAllReputations(); // NEW: Update reputation first
+        loadStatistics();
+        loadBorrowingHistory();
+        JOptionPane.showMessageDialog(this,
+                "All data refreshed successfully! Reputation updated.",
+                "Refresh Complete", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void toggleUserLock() {
+        if ("admin".equals(viewedUser.getRole())) {
+            JOptionPane.showMessageDialog(this, "Cannot lock/unlock admin accounts",
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        String action = viewedUser.isLocked() ? "unlock" : "lock";
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Are you sure you want to " + action + " student '" + viewedUser.getUsername() + "'?\n" +
+                        "Locked students cannot login or borrow books.",
+                "Confirm " + action, JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            try {
+                library.refreshConnection();
+                boolean success = library.toggleUserLock(viewedUser.getId(), !viewedUser.isLocked());
+                if (success) {
+                    viewedUser.setLocked(!viewedUser.isLocked());
+
+                    viewedUser = library.getUserProfile(viewedUser.getId());
+
+                    JOptionPane.showMessageDialog(this,
+                            "Student account " + action + "ed successfully!",
+                            "Success", JOptionPane.INFORMATION_MESSAGE);
+
+                    refreshAllData();
+                } else {
+                    JOptionPane.showMessageDialog(this, "Failed to " + action + " account",
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this,
+                        "Error: " + e.getMessage(),
+                        "Database Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    private void exportToCSV() {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Save Student History");
+        fileChooser.setSelectedFile(new File(viewedUser.getUsername() + "_history.csv"));
+
+        int userSelection = fileChooser.showSaveDialog(this);
+        if (userSelection == JFileChooser.APPROVE_OPTION) {
+            File fileToSave = fileChooser.getSelectedFile();
+            if (!fileToSave.getName().toLowerCase().endsWith(".csv")) {
+                fileToSave = new File(fileToSave.getAbsolutePath() + ".csv");
+            }
+
+            try (PrintWriter writer = new PrintWriter(fileToSave)) {
+                writer.println("Book Title,Author,Borrow Date,Due Date,Return Date,Status,Days Borrowed,Late");
+
+                for (int i = 0; i < historyTableModel.getRowCount(); i++) {
+                    for (int j = 0; j < historyTableModel.getColumnCount(); j++) {
+                        if (j > 0) writer.print(",");
+                        Object value = historyTableModel.getValueAt(i, j);
+                        if (value != null && value.toString().contains(",")) {
+                            writer.print("\"" + value.toString().replace("\"", "\"\"") + "\"");
+                        } else {
+                            writer.print(value != null ? value.toString() : "");
+                        }
+                    }
+                    writer.println();
+                }
+
+                JOptionPane.showMessageDialog(this,
+                        "History exported to:\n" + fileToSave.getAbsolutePath(),
+                        "Export Successful", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(this,
+                        "Error exporting: " + e.getMessage(),
+                        "Export Failed", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+}

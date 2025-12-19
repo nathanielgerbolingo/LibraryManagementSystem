@@ -1,0 +1,148 @@
+package librarysystem;
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+
+public class ProfileFrame extends JFrame {
+    private Library library;
+    private User user;
+
+    public ProfileFrame(Library library, User user) {
+        this.library = library;
+        this.user = user;
+        initComponents();
+    }
+
+    private void initComponents() {
+        setTitle("User Profile - " + user.getUsername());
+        setSize(600, 500);
+        setLocationRelativeTo(null);
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+
+        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+
+        JPanel titlePanel = new JPanel();
+        JLabel titleLabel = new JLabel("User Profile");
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 20));
+        titlePanel.add(titleLabel);
+        mainPanel.add(titlePanel, BorderLayout.NORTH);
+
+        JPanel centerPanel = new JPanel(new GridBagLayout());
+        centerPanel.setBorder(BorderFactory.createTitledBorder("Account Information"));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(10, 10, 10, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        centerPanel.add(new JLabel("Username:"), gbc);
+
+        gbc.gridx = 1;
+        JTextField usernameField = new JTextField(user.getUsername(), 20);
+        usernameField.setEditable(false);
+        centerPanel.add(usernameField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        centerPanel.add(new JLabel("Role:"), gbc);
+
+        gbc.gridx = 1;
+        JTextField roleField = new JTextField(user.getRole(), 20);
+        roleField.setEditable(false);
+        centerPanel.add(roleField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        centerPanel.add(new JLabel("Account Status:"), gbc);
+
+        gbc.gridx = 1;
+        String status = user.isLocked() ? "LOCKED" : "ACTIVE";
+        Color statusColor = user.isLocked() ? Color.RED : new Color(0, 128, 0);
+        JLabel statusLabel = new JLabel(status);
+        statusLabel.setForeground(statusColor);
+        statusLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        centerPanel.add(statusLabel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.gridwidth = 2;
+        centerPanel.add(new JSeparator(), gbc);
+
+        gbc.gridy = 4;
+        JLabel passTitle = new JLabel("Change Password");
+        passTitle.setFont(new Font("Arial", Font.BOLD, 14));
+        centerPanel.add(passTitle, gbc);
+
+        gbc.gridy = 5;
+        gbc.gridwidth = 1;
+        centerPanel.add(new JLabel("New Password:"), gbc);
+
+        gbc.gridx = 1;
+        JPasswordField newPassField = new JPasswordField(20);
+        centerPanel.add(newPassField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 6;
+        centerPanel.add(new JLabel("Confirm Password:"), gbc);
+
+        gbc.gridx = 1;
+        JPasswordField confirmPassField = new JPasswordField(20);
+        centerPanel.add(confirmPassField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 7;
+        gbc.gridwidth = 2;
+        JButton changePassButton = new JButton("Change Password");
+        changePassButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                String newPass = new String(newPassField.getPassword());
+                String confirmPass = new String(confirmPassField.getPassword());
+
+                if (newPass.isEmpty()) {
+                    JOptionPane.showMessageDialog(ProfileFrame.this,
+                            "Password cannot be empty", "Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                if (!newPass.equals(confirmPass)) {
+                    JOptionPane.showMessageDialog(ProfileFrame.this,
+                            "Passwords do not match", "Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                boolean success = library.changePassword(user.getId(), newPass);
+                if (success) {
+                    JOptionPane.showMessageDialog(ProfileFrame.this,
+                            "Password changed successfully!", "Success",
+                            JOptionPane.INFORMATION_MESSAGE);
+                    newPassField.setText("");
+                    confirmPassField.setText("");
+                } else {
+                    JOptionPane.showMessageDialog(ProfileFrame.this,
+                            "Failed to change password", "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+        centerPanel.add(changePassButton, gbc);
+
+        mainPanel.add(centerPanel, BorderLayout.CENTER);
+
+        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton closeButton = new JButton("Close");
+        closeButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                dispose();
+            }
+        });
+        bottomPanel.add(closeButton);
+        mainPanel.add(bottomPanel, BorderLayout.SOUTH);
+
+        add(mainPanel);
+    }
+}

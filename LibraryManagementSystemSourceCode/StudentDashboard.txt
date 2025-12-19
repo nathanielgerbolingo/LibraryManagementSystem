@@ -1,0 +1,614 @@
+package librarysystem;
+
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.util.ArrayList;
+import java.sql.PreparedStatement; // ADDED
+import java.sql.ResultSet;         // ADDED
+import java.sql.SQLException;      // ADDED
+import javax.swing.SwingUtilities; // ADDED
+
+public class StudentDashboard extends JFrame {
+    private Library library;
+    private User user;
+    private JTable availableBooksTable;
+    private DefaultTableModel availableBooksTableModel;
+    private JTable borrowedBooksTable;
+    private DefaultTableModel borrowedBooksTableModel;
+    private JLabel reputationLabel;
+    private JLabel borrowLimitLabel;
+
+    public StudentDashboard(Library library, User user) {
+        this.library = library;
+        this.user = user;
+        initComponents();
+        refreshAllData();
+    }
+
+    private void initComponents() {
+        setTitle("Library Management System - Student Dashboard");
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(1100, 700);
+        setLocationRelativeTo(null);
+
+        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        JLabel titleLabel = new JLabel("📚 STUDENT DASHBOARD - Welcome " + user.getUsername());
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 18));
+        titleLabel.setForeground(new Color(0, 100, 0));
+        headerPanel.add(titleLabel, BorderLayout.CENTER);
+
+        JPanel headerRightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton globalRefreshButton = new JButton("⟳ Refresh All");
+        globalRefreshButton.setFont(new Font("Arial", Font.BOLD, 12));
+        globalRefreshButton.addActionListener(e -> refreshAllData());
+        headerRightPanel.add(globalRefreshButton);
+        headerPanel.add(headerRightPanel, BorderLayout.EAST);
+
+        mainPanel.add(headerPanel, BorderLayout.NORTH);
+
+        JTabbedPane tabbedPane = new JTabbedPane();
+        tabbedPane.addTab("📖 Available Books", createAvailableBooksTab());
+        tabbedPane.addTab("📚 My Books", createBorrowedBooksTab());
+        tabbedPane.addTab("👤 My Profile", createProfileTab());
+
+        mainPanel.add(tabbedPane, BorderLayout.CENTER);
+
+        JPanel footerPanel = new JPanel(new BorderLayout());
+
+        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JButton profileButton = new JButton("👁️ View Full Profile");
+        profileButton.addActionListener(e -> viewProfile());
+        leftPanel.add(profileButton);
+        footerPanel.add(leftPanel, BorderLayout.WEST);
+
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton logoutButton = new JButton("🚪 Logout");
+        logoutButton.addActionListener(e -> logout());
+        rightPanel.add(logoutButton);
+        footerPanel.add(rightPanel, BorderLayout.EAST);
+
+        mainPanel.add(footerPanel, BorderLayout.SOUTH);
+
+        add(mainPanel);
+    }
+
+    private JPanel createAvailableBooksTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        // NEW: Reputation info panel
+        JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        reputationLabel = new JLabel("Reputation: " + user.getReputation() + "/100 (" + user.getReputationStatus() + ")");
+        reputationLabel.setFont(new Font("Arial", Font.BOLD, 12));
+        reputationLabel.setForeground(user.getReputationColor());
+        infoPanel.add(reputationLabel);
+
+        borrowLimitLabel = new JLabel("Borrowing Limit: " + user.getBorrowedBooks().size() + "/" + user.getMaxBorrowLimit() + " books");
+        borrowLimitLabel.setFont(new Font("Arial", Font.BOLD, 12));
+        infoPanel.add(borrowLimitLabel);
+
+        panel.add(infoPanel, BorderLayout.NORTH);
+
+        // Table for available books
+        String[] columns = {"ID", "Title", "Author", "Available", "Status"};
+        availableBooksTableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        availableBooksTable = new JTable(availableBooksTableModel);
+        availableBooksTable.setRowHeight(25);
+        JScrollPane scrollPane = new JScrollPane(availableBooksTable);
+        scrollPane.setBorder(BorderFactory.createTitledBorder("Available Books"));
+
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
+        JButton borrowButton = new JButton("📥 Borrow Selected");
+        JButton refreshButton = new JButton("⟳ Refresh Books");
+
+        borrowButton.addActionListener(e -> borrowBook());
+        refreshButton.addActionListener(e -> refreshAvailableBooks());
+
+        buttonPanel.add(borrowButton);
+        buttonPanel.add(refreshButton);
+
+        panel.add(buttonPanel, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private JPanel createBorrowedBooksTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        // Table for borrowed books - UPDATED with due date
+        String[] columns = {"ID", "Title", "Author", "Borrow Date", "Due Date", "Days Left"};
+        borrowedBooksTableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        borrowedBooksTable = new JTable(borrowedBooksTableModel);
+        borrowedBooksTable.setRowHeight(25);
+        JScrollPane scrollPane = new JScrollPane(borrowedBooksTable);
+        scrollPane.setBorder(BorderFactory.createTitledBorder("My Borrowed Books"));
+
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
+        JButton returnButton = new JButton("📤 Return Selected");
+        JButton refreshButton = new JButton("⟳ Refresh My Books");
+
+        returnButton.addActionListener(e -> returnBook());
+        refreshButton.addActionListener(e -> refreshBorrowedBooks());
+
+        buttonPanel.add(returnButton);
+        buttonPanel.add(refreshButton);
+
+        panel.add(buttonPanel, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private JPanel createProfileTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+
+        JPanel profilePanel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(10, 10, 10, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        profilePanel.add(new JLabel("Username:"), gbc);
+
+        gbc.gridx = 1;
+        JTextField usernameField = new JTextField(user.getUsername(), 25);
+        usernameField.setEditable(false);
+        profilePanel.add(usernameField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        profilePanel.add(new JLabel("Role:"), gbc);
+
+        gbc.gridx = 1;
+        JTextField roleField = new JTextField(user.getRole(), 25);
+        roleField.setEditable(false);
+        profilePanel.add(roleField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        profilePanel.add(new JLabel("Account Status:"), gbc);
+
+        gbc.gridx = 1;
+        String status = user.isLocked() ? "🔒 LOCKED" : "✅ ACTIVE";
+        Color statusColor = user.isLocked() ? Color.RED : new Color(0, 128, 0);
+        JLabel statusLabel = new JLabel(status);
+        statusLabel.setForeground(statusColor);
+        statusLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        profilePanel.add(statusLabel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        profilePanel.add(new JLabel("Reputation:"), gbc);
+
+        gbc.gridx = 1;
+        JLabel repLabel = new JLabel(user.getReputation() + "/100 (" + user.getReputationStatus() + ")");
+        repLabel.setForeground(user.getReputationColor());
+        repLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        profilePanel.add(repLabel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 4;
+        profilePanel.add(new JLabel("Borrowing Limit:"), gbc);
+
+        gbc.gridx = 1;
+        JLabel limitLabel = new JLabel(user.getMaxBorrowLimit() + " books maximum");
+        limitLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        profilePanel.add(limitLabel, gbc);
+
+        if (user.isLocked()) {
+            gbc.gridx = 0;
+            gbc.gridy = 5;
+            gbc.gridwidth = 2;
+            JLabel lockedMsg = new JLabel("⚠️ Your account is locked. Please contact admin.");
+            lockedMsg.setForeground(Color.RED);
+            lockedMsg.setFont(new Font("Arial", Font.BOLD, 12));
+            profilePanel.add(lockedMsg, gbc);
+        }
+
+        gbc.gridx = 0;
+        gbc.gridy = 6;
+        gbc.gridwidth = 2;
+        profilePanel.add(new JSeparator(), gbc);
+
+        gbc.gridy = 7;
+        JLabel borrowedLabel = new JLabel("Currently Borrowed Books: " + user.getBorrowedBooks().size() + "/" + user.getMaxBorrowLimit());
+        borrowedLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        profilePanel.add(borrowedLabel, gbc);
+
+        // Reputation rules info
+        gbc.gridy = 8;
+        JLabel rulesLabel = new JLabel("<html><b>Reputation Rules:</b><br>" +
+                "• 80-100: Excellent (3 books max)<br>" +
+                "• 50-79: Good (2 books max)<br>" +
+                "• 0-49: Fair (1 book max)<br>" +
+                "• Late return: -5 reputation</html>");
+        rulesLabel.setFont(new Font("Arial", Font.PLAIN, 11));
+        profilePanel.add(rulesLabel, gbc);
+
+        // Change Password Section
+        gbc.gridy = 9;
+        gbc.gridwidth = 2;
+        JLabel passTitle = new JLabel("Change Password");
+        passTitle.setFont(new Font("Arial", Font.BOLD, 14));
+        profilePanel.add(passTitle, gbc);
+
+        gbc.gridy = 10;
+        gbc.gridwidth = 1;
+        profilePanel.add(new JLabel("New Password:"), gbc);
+
+        gbc.gridx = 1;
+        JPasswordField newPassField = new JPasswordField(25);
+        profilePanel.add(newPassField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 11;
+        profilePanel.add(new JLabel("Confirm Password:"), gbc);
+
+        gbc.gridx = 1;
+        JPasswordField confirmPassField = new JPasswordField(25);
+        profilePanel.add(confirmPassField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 12;
+        gbc.gridwidth = 2;
+        JButton changePassButton = new JButton("🔐 Change Password");
+        changePassButton.addActionListener(e -> changePassword(newPassField, confirmPassField));
+        profilePanel.add(changePassButton, gbc);
+
+        // Fill remaining space
+        gbc.gridy = 13;
+        gbc.weighty = 1.0;
+        gbc.fill = GridBagConstraints.BOTH;
+        profilePanel.add(new JPanel(), gbc);
+
+        panel.add(profilePanel, BorderLayout.CENTER);
+
+        JPanel refreshPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton refreshProfileButton = new JButton("⟳ Refresh Profile");
+        refreshProfileButton.addActionListener(e -> refreshProfile());
+        refreshPanel.add(refreshProfileButton);
+        panel.add(refreshPanel, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private void refreshAllData() {
+        library.updateAllReputations(); // NEW: Update reputation first
+        refreshAvailableBooks();
+        refreshBorrowedBooks();
+        refreshProfile();
+        JOptionPane.showMessageDialog(this,
+                "All data refreshed successfully! Reputation updated.",
+                "Refresh Complete", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void refreshAvailableBooks() {
+        try {
+            library.refreshConnection();
+            ArrayList<Book> books = library.getAllBooks();
+
+            SwingUtilities.invokeLater(() -> {
+                availableBooksTableModel.setRowCount(0);
+                for (Book book : books) {
+                    String status = book.isBorrowed() ? "Currently Borrowed" : "Available";
+                    availableBooksTableModel.addRow(new Object[]{
+                            book.getId(),
+                            book.getTitle(),
+                            book.getAuthor(),
+                            book.getQuantity(),
+                            status
+                    });
+                }
+            });
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error refreshing books: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void refreshBorrowedBooks() {
+        try {
+            library.refreshConnection();
+            User updatedUser = library.getUserProfile(user.getId());
+            if (updatedUser != null) {
+                user = updatedUser;
+                updateReputationInfo();
+            }
+
+            // Get detailed borrowed books info with due dates
+            ArrayList<Object[]> borrowedDetails = library.getStudentBorrowingHistory(user.getId());
+
+            SwingUtilities.invokeLater(() -> {
+                borrowedBooksTableModel.setRowCount(0);
+                for (Object[] row : borrowedDetails) {
+                    if (row[3] == null) { // If return_date is null (still borrowed)
+                        String title = (String) row[0];
+                        String author = (String) row[1];
+                        java.sql.Timestamp borrowDate = (java.sql.Timestamp) row[2];
+                        java.sql.Timestamp dueDate = (java.sql.Timestamp) row[4];
+
+                        // Calculate days left
+                        long daysLeft = 0;
+                        if (dueDate != null) {
+                            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+                            java.time.LocalDateTime due = dueDate.toLocalDateTime();
+                            daysLeft = java.time.temporal.ChronoUnit.DAYS.between(now, due);
+                        }
+
+                        String daysLeftText = daysLeft + " days";
+                        if (daysLeft < 0) {
+                            daysLeftText = "OVERDUE!";
+                        }
+
+                        borrowedBooksTableModel.addRow(new Object[]{
+                                "", // Placeholder for ID (we don't have it in the result)
+                                title,
+                                author,
+                                borrowDate.toString().substring(0, 16),
+                                dueDate != null ? dueDate.toString().substring(0, 16) : "N/A",
+                                daysLeftText
+                        });
+                    }
+                }
+
+                if (borrowedBooksTableModel.getRowCount() == 0) {
+                    borrowedBooksTableModel.addRow(new Object[]{
+                            "", "No books currently borrowed", "", "", "", ""
+                    });
+                }
+            });
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error refreshing borrowed books: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void refreshProfile() {
+        try {
+            library.refreshConnection();
+            User updatedUser = library.getUserProfile(user.getId());
+            if (updatedUser != null) {
+                user = updatedUser;
+                updateReputationInfo();
+                JOptionPane.showMessageDialog(this,
+                        "Profile refreshed!",
+                        "Success", JOptionPane.INFORMATION_MESSAGE);
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error refreshing profile: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void updateReputationInfo() {
+        if (reputationLabel != null) {
+            reputationLabel.setText("Reputation: " + user.getReputation() + "/100 (" + user.getReputationStatus() + ")");
+            reputationLabel.setForeground(user.getReputationColor());
+        }
+        if (borrowLimitLabel != null) {
+            borrowLimitLabel.setText("Borrowing Limit: " + user.getBorrowedBooks().size() + "/" + user.getMaxBorrowLimit() + " books");
+        }
+    }
+
+    private void borrowBook() {
+        if (user.isLocked()) {
+            JOptionPane.showMessageDialog(this,
+                    "Your account is locked. Cannot borrow books.",
+                    "Account Locked", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        int selectedRow = availableBooksTable.getSelectedRow();
+        if (selectedRow == -1) {
+            JOptionPane.showMessageDialog(this, "Please select a book to borrow",
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        int bookId = (int) availableBooksTableModel.getValueAt(selectedRow, 0);
+        String bookTitle = (String) availableBooksTableModel.getValueAt(selectedRow, 1);
+
+        // Check borrowing limit based on reputation
+        if (user.getBorrowedBooks().size() >= user.getMaxBorrowLimit()) {
+            JOptionPane.showMessageDialog(this,
+                    "You cannot borrow more than " + user.getMaxBorrowLimit() + " books at a time\n" +
+                            "Current reputation: " + user.getReputation() + "/100",
+                    "Limit Reached", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // NEW: Ask for borrowing duration
+        String[] durationOptions = {"7 days", "14 days", "21 days", "30 days"};
+        String selectedDuration = (String) JOptionPane.showInputDialog(this,
+                "Select borrowing duration for '" + bookTitle + "':",
+                "Select Duration",
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                durationOptions,
+                durationOptions[1]);
+
+        if (selectedDuration == null) {
+            return; // User cancelled
+        }
+
+        int durationDays = 14; // Default
+        if (selectedDuration.equals("7 days")) durationDays = 7;
+        else if (selectedDuration.equals("14 days")) durationDays = 14;
+        else if (selectedDuration.equals("21 days")) durationDays = 21;
+        else if (selectedDuration.equals("30 days")) durationDays = 30;
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Borrow '" + bookTitle + "' for " + durationDays + " days?\n" +
+                        "Late returns will reduce your reputation by 5 points.",
+                "Confirm Borrow", JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            try {
+                library.refreshConnection();
+                boolean success = library.borrowBook(user, bookId, durationDays);
+                if (success) {
+                    JOptionPane.showMessageDialog(this,
+                            "Book borrowed successfully for " + durationDays + " days!\n" +
+                                    "Please return it on time to maintain your reputation.",
+                            "Success", JOptionPane.INFORMATION_MESSAGE);
+                    refreshAllData();
+                } else {
+                    JOptionPane.showMessageDialog(this, "Book not available for borrowing",
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this,
+                        "Error: " + e.getMessage(),
+                        "Database Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    private void returnBook() {
+        int selectedRow = borrowedBooksTable.getSelectedRow();
+        if (selectedRow == -1) {
+            JOptionPane.showMessageDialog(this, "Please select a book to return",
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        // Since we don't have book ID in the table, we need to get it differently
+        String bookTitle = (String) borrowedBooksTableModel.getValueAt(selectedRow, 1);
+
+        // Find book ID from available books table or database
+        int bookId = -1;
+        try {
+            library.refreshConnection();
+            String sql = "SELECT id FROM books WHERE title = ?";
+            PreparedStatement stmt = library.getConnection().prepareStatement(sql);
+            stmt.setString(1, bookTitle);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                bookId = rs.getInt("id");
+            }
+            stmt.close();
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Error finding book: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        if (bookId == -1) {
+            JOptionPane.showMessageDialog(this, "Could not find book ID",
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Return '" + bookTitle + "'?\n" +
+                        "Late returns will reduce your reputation by 5 points.",
+                "Confirm Return", JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            try {
+                library.refreshConnection();
+                boolean success = library.returnBook(user, bookId);
+                if (success) {
+                    // Check if reputation was affected
+                    User updatedUser = library.getUserProfile(user.getId());
+                    if (updatedUser != null && updatedUser.getReputation() < user.getReputation()) {
+                        JOptionPane.showMessageDialog(this,
+                                "Book returned successfully!\n" +
+                                        "⚠️ Your reputation decreased by " + (user.getReputation() - updatedUser.getReputation()) +
+                                        " points due to late return.\n" +
+                                        "New reputation: " + updatedUser.getReputation() + "/100",
+                                "Book Returned (Late)", JOptionPane.WARNING_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(this, "Book returned successfully!",
+                                "Success", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                    refreshAllData();
+                } else {
+                    JOptionPane.showMessageDialog(this, "Failed to return book",
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this,
+                        "Error: " + e.getMessage(),
+                        "Database Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    private void changePassword(JPasswordField newPassField, JPasswordField confirmPassField) {
+        String newPass = new String(newPassField.getPassword());
+        String confirmPass = new String(confirmPassField.getPassword());
+
+        if (newPass.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "Password cannot be empty", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        if (!newPass.equals(confirmPass)) {
+            JOptionPane.showMessageDialog(this,
+                    "Passwords do not match", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        if (newPass.length() < 4) {
+            JOptionPane.showMessageDialog(this,
+                    "Password must be at least 4 characters long", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        try {
+            library.refreshConnection();
+            boolean success = library.changePassword(user.getId(), newPass);
+            if (success) {
+                JOptionPane.showMessageDialog(this,
+                        "Password changed successfully!", "Success",
+                        JOptionPane.INFORMATION_MESSAGE);
+                newPassField.setText("");
+                confirmPassField.setText("");
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "Failed to change password", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error: " + e.getMessage(),
+                    "Database Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void viewProfile() {
+        new ProfileFrame(library, user).setVisible(true);
+    }
+
+    private void logout() {
+        dispose();
+        new LoginFrame().setVisible(true);
+    }
+}

@@ -1,0 +1,67 @@
+package librarysystem;
+
+import java.util.ArrayList;
+
+public class User {
+    private int id;
+    private String username;
+    private String password;
+    private String role;
+    private boolean isLocked;
+    private int reputation; // NEW: Reputation field
+    private ArrayList<Book> borrowedBooks;
+
+    public User(String username, String password, String role) {
+        this.username = username;
+        this.password = password;
+        this.role = role;
+        this.isLocked = false;
+        this.reputation = 100; // Default reputation
+        borrowedBooks = new ArrayList<>();
+    }
+
+    public User(int id, String username, String password, String role, boolean isLocked, int reputation) {
+        this.id = id;
+        this.username = username;
+        this.password = password;
+        this.role = role;
+        this.isLocked = isLocked;
+        this.reputation = reputation;
+        borrowedBooks = new ArrayList<>();
+    }
+
+    // Getters and Setters
+    public int getId() { return id; }
+    public String getUsername() { return username; }
+    public String getPassword() { return password; }
+    public String getRole() { return role; }
+    public boolean isLocked() { return isLocked; }
+    public void setLocked(boolean locked) { this.isLocked = locked; }
+    public int getReputation() { return reputation; } // NEW
+    public void setReputation(int reputation) { this.reputation = reputation; } // NEW
+    public ArrayList<Book> getBorrowedBooks() { return borrowedBooks; }
+    public void setBorrowedBooks(ArrayList<Book> borrowedBooks) { this.borrowedBooks = borrowedBooks; }
+
+    // Helper method to check borrowing limit based on reputation
+    public int getMaxBorrowLimit() {
+        if (reputation >= 80) return 3;
+        else if (reputation >= 50) return 2;
+        else return 1;
+    }
+
+    // Helper method to get reputation status
+    public String getReputationStatus() {
+        if (reputation >= 80) return "Excellent";
+        else if (reputation >= 60) return "Good";
+        else if (reputation >= 40) return "Fair";
+        else return "Poor";
+    }
+
+    // Helper method to get reputation color
+    public java.awt.Color getReputationColor() {
+        if (reputation >= 80) return new java.awt.Color(0, 128, 0); // Green
+        else if (reputation >= 60) return new java.awt.Color(0, 100, 0); // Dark Green
+        else if (reputation >= 40) return new java.awt.Color(255, 140, 0); // Orange
+        else return new java.awt.Color(255, 0, 0); // Red
+    }
+}
